@@ -1,0 +1,110 @@
+name: Deploy Hello World App
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v2
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v1
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: us-west-2
+
+      - name: Login to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v1
+
+      - name: Build, tag, and push Docker image to Amazon ECR
+        id: build-image
+        env:
+          ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+          ECR_REPOSITORY: ${{ secrets.ECR_REPOSITORY_NAME }}
+          IMAGE_TAG: ${{ github.sha }}
+        run: |
+          cd app
+          docker build -t $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG .
+          docker push $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
+          echo "::set-output name=image::$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG"
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v1
+        with:
+          terraform_version: 1.0.0
+
+      - name: Terraform Init
+        run: |
+          cd terraform/environments/dev
+          terraform init
+
+      - name: Terraform Validate
+        run: |
+          cd terraform/environments/dev
+          terraform validate
+
+      - name: Terraform Plan
+        run: |
+          cd terraform/environments/dev
+          terraform plan -var="rds_password=${{ secrets.RDS_PASSWORD }}"
+
+      - name: Install kubectl
+        uses: azure/setup-kubectl@v1
+        with:
+          version: 'v1.21.0'
+
+      - name: Configure kubectl
+        run: |
+          aws eks update-kubeconfig --name $(cd terraform/environments/dev && terraform output -raw eks_cluster_name) --region us-west-2
+
+      - name: Install Helm
+        uses: azure/setup-helm@v1
+        with:
+          version: 'v3.7.0'
+
+      - name: Deploy application with Helm
+        env:
+          ECR_REPOSITORY_URL: ${{ steps.login-ecr.outputs.registry }}/${{ secrets.ECR_REPOSITORY_NAME }}
+          IMAGE_TAG: ${{ github.sha }}
+        run: |
+          export RDS_SECRET_ARN=$(cd terraform/environments/dev && terraform output -raw rds_secret_arn)
+          
+          # Create or update the hello-world namespace
+          kubectl create namespace hello-world --dry-run=client -o yaml | kubectl apply -f -
+          
+          # Create or update the monitoring namespace
+          kubectl create namespace monitoring --dry-run=client -o yaml | kubectl apply -f -
+          
+          # Deploy AWS Secrets Manager CSI driver
+          kubectl apply -f https://raw.githubusercontent.com/kubernetes-sigs/secrets-store-csi-driver/master/deploy/rbac-secretproviderclass.yaml
+          kubectl apply -f https://raw.githubusercontent.com/kubernetes-sigs/secrets-store-csi-driver/master/deploy/csidriver.yaml
+          kubectl apply -f https://raw.githubusercontent.com/kubernetes-sigs/secrets-store-csi-driver/master/deploy/secrets-store.csi.x-k8s.io_secretproviderclasses.yaml
+          kubectl apply -f https://raw.githubusercontent.com/kubernetes-sigs/secrets-store-csi-driver/master/deploy/secrets-store.csi.x-k8s.io_secretproviderclasspodstatuses.yaml
+          kubectl apply -f https://raw.githubusercontent.com/kubernetes-sigs/secrets-store-csi-driver/master/deploy/secrets-store-csi-driver.yaml
+          kubectl apply -f https://raw.githubusercontent.com/aws/secrets-store-csi-driver-provider-aws/main/deployment/aws-provider-installer.yaml
+          
+          # Update values in the Helm chart
+          sed -i "s|\${ECR_REPOSITORY_URL}|$ECR_REPOSITORY_URL|g" helm/hello-world/values.yaml
+          sed -i "s|\${RDS_SECRET_ARN}|$RDS_SECRET_ARN|g" helm/hello-world/values.yaml
+          sed -i "s|tag: latest|tag: $IMAGE_TAG|g" helm/hello-world/values.yaml
+          
+          # Deploy with Helm
+          helm upgrade --install hello-world ./helm/hello-world --namespace hello-world
+          
+      - name: Get application URL
+        run: |
+          echo "Waiting for load balancer to be provisioned..."
+          sleep 60
+          APP_URL=$(kubectl get svc -n hello-world hello-world-app -o jsonpath='{.status.loadBalancer.ingress[0].hostname}')
+          GRAFANA_URL=$(kubectl get svc -n monitoring grafana -o jsonpath='{.status.loadBalancer.ingress[0].hostname}')
+          
+          echo "Application URL: http://$APP_URL"
+          echo "Grafana URL: http://$GRAFANA_URL (username: admin, password: admin)"

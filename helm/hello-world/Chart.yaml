@@ -1,0 +1,8 @@
+apiVersion: v2
+name: hello-world
+description: A Helm chart for Hello World Application with Prometheus and Grafana monitoring
+type: application
+version: 0.1.0
+appVersion: "1.0.0"
+maintainers:
+  - name: DevOps Team

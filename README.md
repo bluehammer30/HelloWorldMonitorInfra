@@ -1,6 +1,6 @@
 # Containerized Hello World Application with AWS, Terraform, and Monitoring
 
-This project implements a containerized Hello World application deployed on AWS EKS with MySQL RDS database, secure secrets management, and monitoring using Prometheus and Grafana.
+This project implements a containerized Hello World application deployed on AWS EKS with MySQL RDS database, secure secrets management, and monitoring using Prometheus and Grafana. It also includes bonus features like Helm charts for application deployment, Prometheus alerting rules, and CI/CD integration with GitHub Actions.
 
 ## Architecture
 
@@ -120,10 +120,60 @@ This project uses AWS Secrets Manager to store database credentials and the Kube
 2. Credentials are automatically rotated when updated in AWS Secrets Manager
 3. Only authorized pods can access the secrets
 
+## Bonus Features
+
+### Helm Charts
+
+This project includes Helm charts for easier application deployment and management:
+
+```bash
+# Deploy using Helm
+helm install hello-world ./helm/hello-world --namespace hello-world
+```
+
+The Helm chart includes:
+- Parameterized deployment templates
+- Configurable values in values.yaml
+- Integrated monitoring setup
+- Secrets management configuration
+
+### Prometheus Alerting Rules
+
+Prometheus is configured with alerting rules for monitoring critical metrics:
+
+1. **High CPU Usage Alert**: Triggers when container CPU usage exceeds 80% for 5 minutes
+2. **Database Latency Alert**: Triggers when database query latency exceeds 500ms for 2 minutes
+
+These alerts help identify performance issues before they affect users.
+
+### CI/CD Integration
+
+The project includes GitHub Actions workflow for continuous integration and deployment:
+
+- Automatically builds and pushes Docker images to ECR
+- Runs Terraform validation and planning
+- Deploys the application using Helm charts
+- Provides application and Grafana URLs after deployment
+
+To use the CI/CD pipeline, add the following secrets to your GitHub repository:
+- `AWS_ACCESS_KEY_ID`
+- `AWS_SECRET_ACCESS_KEY`
+- `ECR_REPOSITORY_NAME`
+- `RDS_PASSWORD`
+
 ## Cleanup
 
-To clean up all resources:
+### Using Helm
+```bash
+# Uninstall Helm release
+helm uninstall hello-world -n hello-world
 
+# Delete namespaces
+kubectl delete namespace hello-world
+kubectl delete namespace monitoring
+```
+
+### Manual Cleanup
 ```bash
 # Delete Kubernetes resources
 kubectl delete -f k8s/monitoring/grafana-deployment.yaml

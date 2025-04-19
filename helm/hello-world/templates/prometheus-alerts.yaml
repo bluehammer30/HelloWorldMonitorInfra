@@ -1,0 +1,26 @@
+{{- if and .Values.monitoring.enabled .Values.alerting.enabled }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: prometheus-alerts
+  namespace: {{ .Values.monitoring.namespace }}
+  labels:
+    app: prometheus
+    chart: {{ .Chart.Name }}-{{ .Chart.Version }}
+    release: {{ .Release.Name }}
+data:
+  alerts.yml: |-
+    groups:
+    - name: hello-world-alerts
+      rules:
+      {{- range .Values.alerting.rules }}
+      - alert: {{ .name }}
+        expr: {{ .expr }}
+        for: {{ .for }}
+        labels:
+          severity: {{ .labels.severity }}
+        annotations:
+          summary: {{ .annotations.summary | quote }}
+          description: {{ .annotations.description | quote }}
+      {{- end }}
+{{- end }}
